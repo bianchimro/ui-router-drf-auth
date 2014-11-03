@@ -1,0 +1,10 @@
+{
+  "name" : "ui-router-drf-auth",
+  "description" : "Auth for angular ui-router, based on django rest framework as a backend",
+  "author" : "Mauro Bianchi <bianchimro@gmail.com>",
+  "contributors" : [],
+  
+  "repository" : {"type": "git", "url": "git://github.com/inmagik/ui-router-drf-auth.git"},
+  "main" : "ui-router-drf-auth.js",
+  "version" : "0.1.0"
+}
