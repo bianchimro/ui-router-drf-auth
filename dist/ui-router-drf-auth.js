@@ -1,3 +1,11 @@
+/*!
+ * ui-router-drf-auth
+ * 
+ * Version: 0.1.0 - 2014-11-03T17:13:16.960Z
+ * License: 
+ */
+
+
 
 
     angular.module("urda", [] )
