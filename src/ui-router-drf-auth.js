@@ -44,8 +44,9 @@
                 formLoginUrl : this.formLoginUrl,
                 tokenUrl : this.tokenUrl,
                 socialLoginUrl : this.socialLoginUrl,
-                mode : this.modem,
-                apiAuthMode : this.apiAuthMode
+                mode : this.mode,
+                apiAuthMode : this.apiAuthMode,
+                tokenVerifyUrl : this.tokenVerifyUrl,
             };
         };
 
@@ -57,6 +58,10 @@
 
         this.setTokenUrl = function(url) {
             this.tokenUrl = url;
+        };
+
+        this.setTokenVerifyUrl = function(url) {
+            this.tokenVerifyUrl = url;
         };
 
 
@@ -77,8 +82,7 @@
 
     })
 
-
-
+    
     .service('urdaSession', ['urdaConfig', function(urdaConfig){
         this.create = function (data) {
             this.sessionData = data;
@@ -91,22 +95,28 @@
     }])
 
 
-    .factory('urdaService', ['$rootScope',  '$http', '$q', 'AUTH_EVENTS', 'urdaSession', 'urdaConfig', '$cookieStore', '$window','$timeout','$location',
-        function($rootScope, $http, $q, AUTH_EVENTS, urdaSession, urdaConfig, $cookieStore,$window,$timeout,$location){
+    .factory('urdaService', ['$rootScope',  '$http', '$q', 'AUTH_EVENTS', 'urdaSession', 'urdaConfig','$window','$timeout','$location',
+        function($rootScope, $http, $q, AUTH_EVENTS, urdaSession, urdaConfig,$window,$timeout,$location){
 
-        var svc = { };
+        var svc = { headers : [] };
 
         var loginUrl = urdaConfig.loginUrl;
         var tokenUrl = urdaConfig.tokenUrl;
+        var socialLoginUrl = urdaConfig.socialLoginUrl;
+        var tokenVerifyUrl = urdaConfig.tokenVerifyUrl;
+
         var servervaluesUrl = urdaConfig.servervaluesUrl;
 
         svc.csrfToken = null;
 
 
         var loginSuccess = function(){
+          console.log("login success!")
             //This will attache a Token header to all requests. (django rest framework auth_token in backend)
             if(urdaConfig.apiAuthMode == 'token'){
-                $http.defaults.headers.common.Authorization = "Token " + DrfSession.sessionData.token;
+                $http.defaults.headers.common.Authorization = "Token " + urdaSession.sessionData.token;
+                localStorage.setItem("xxx-token", urdaSession.sessionData.token);
+                svc.headers.push(['Authorization', "Token " + urdaSession.sessionData.token]) ;
             }
             if(urdaConfig.apiAuthMode == 'session'){
                 //#TODO: not implemented right now
@@ -135,8 +145,11 @@
 
         var logout = function(){
             if(urdaConfig.apiAuthMode == 'token'){
-                delete $http.defaults.headers.common.Authorization;
-                DrfSession.destroy();
+                
+                delete $http.defaults.headers.common["Authorization"];
+                urdaSession.destroy();
+                svc.headers = [];
+                localStorage.removeItem("xxx-token");
                 //$cookieStore.remove("sessionid");
             }
             if(urdaConfig.apiAuthMode == 'session'){
@@ -145,25 +158,84 @@
                 //$cookieStore.set(..something...)
                 //$cookieStore.remove("sessionid");
             }
-
+            console.log(100)
             $rootScope.$broadcast(AUTH_EVENTS.logoutSuccess);
         };
 
 
-        var login = function (credentials) {
-            return $http
-                .post(loginUrl, credentials)
-                .error(function(data){
-                    loginError();
-                })
-                .then(function (res) {
-                    DrfSession.create(res.data);
-                    //console.log(DrfSession)
-                    loginSuccess();
-                    return res;
-                });
+        svc.openPop = function(url){
+          
+          var promise = new Promise(function(resolve, reject) {
+      
+            var w = window.open(url, "namedWindow","menubar=0,resizable=1,width=400,height=400");
+            
+            w.onload = function(){
+              var lateHanlder = setTimeout(function(){
+                reject(Error("It broke, too late"), 30000);
+              });
+            }
+
+            var listener = window.addEventListener('message', function (event) {
+                
+                if(event.data.indexOf("token:") != 0){
+                  return;
+                }
+                var token = event.data.split(":")[1];
+                console.log("worked", token);
+                //clearTimeout(lateHanlder);
+                resolve(token);
+            });
+
+          });
+
+          return promise;
         };
 
+
+
+        svc.loginDjango = function(providerName){
+          var authKey = Math.random() * 10000;
+          var url = socialLoginUrl + providerName + "?authkey="+authKey + "&next=/popuptoken?authkey="+authKey;
+          var promise = new Promise(function(resolve, reject) {
+
+              svc.openPop(url)
+              .then(function(res){
+                console.log("wwwwo", res)
+                  resolve(res);
+              })
+              .catch(function(err){
+                console.error(err)
+                  reject(err);
+              })
+          });
+
+          return promise;
+        };
+
+
+
+
+        svc.loginViaToken = function(token){
+          $http.defaults.headers.common.Authorization = "Token " + token;
+          return $http
+                .get(tokenVerifyUrl)
+                .error(function(err){
+                  console.error("tokenVerifyUrl err", err)
+                    loginError();
+                    localStorage.removeItem("xxx-token");
+                })
+                .then(function () {
+                    console.log("ok, tokenVerifyUrl")
+                    urdaSession.create({token:token});
+                    //console.log(urdaSession)
+                    loginSuccess();
+                    return token;
+                });
+
+        }
+
+
+        
 
         var tokenLogin = function (credentials) {
             return $http
@@ -172,8 +244,8 @@
                     loginError();
                 })
                 .then(function (res) {
-                    DrfSession.create(res.data);
-                    //console.log(DrfSession)
+                    urdaSession.create(res.data);
+                    //console.log(urdaSession)
                     loginSuccess();
                     return res;
                 });
@@ -182,16 +254,18 @@
 
         var socialLogin = function (credentials) {
             //do the magic and return token
-                socialAuthLogin.loginDjango(credentials.provider)
-                .then(function (token) {
-                    DrfSession.create({token:token });
-                    //console.log(DrfSession)
-                    loginSuccess();
-                    return res;
-                })
-                .catch(function(err){
-                    loginError();
-                });
+            console.error("sl",credentials)
+              svc.loginDjango(credentials.provider)
+              .then(function (token) {
+                  urdaSession.create({token:token });
+                  //console.log(urdaSession)
+                  loginSuccess(token);
+                  return token;
+              })
+              .catch(function(err){
+                console.error("x", err)
+                  loginError();
+              });
         };
 
 
@@ -219,7 +293,7 @@
 
         svc.login = function (credentials) {
 
-
+            console.log(100, urdaConfig)
             if(urdaConfig.mode == 'social')  {
 
                   return socialLogin(credentials);
@@ -242,18 +316,20 @@
         };
 
         svc.isAuthenticated = function () {
-            //console.log(DrfSession.sessionData)
-            return !!DrfSession.sessionData;
+            //console.log(urdaSession.sessionData)
+            return !!urdaSession.sessionData;
         };
 
 
 
         //#TODO: check it
         svc.checkRoute = function(next, toParams, event){
+          console.log("check")
           if(next.auth){
               if(next.auth.requiresAuth){
-                //console.log("xx, requires auth", next)
+                console.log("xx, requires auth", next)
                 if (!svc.isAuthenticated()) {
+                  console.error("hhh")
                   // user is not allowed
                   if(event){
                     event.preventDefault();
@@ -346,7 +422,10 @@
         }
       };
     }]);
-}]);
+  
+
+
+  }])
 
 
 
@@ -355,7 +434,7 @@
 /**
    * Private module, a utility, required internally by 'http-auth-interceptor'.
    */
-  angular.module('http-auth-interceptor-buffer', [])
+  
 
   .factory('httpBuffer', ['$injector', function($injector) {
     /** Holds all the requests, so they can be re-requested in future. */
